@@ -22,6 +22,9 @@
 #define RELE_NA_ORIGEM 10
 #define RELE_NA_RESERVA 11
 
+// ENTRADA RESET
+#define BOTAO_RESET 12
+
 enum State {
   SISTEMA_NORMAL,
   SISTEMA_EM_FALHA,
@@ -29,44 +32,61 @@ enum State {
   SISTEMA_EM_RESERVA
 };
 
-int tempo_up_para_desligar_emissor = 50;
-int tempo_up_para_ligar_emissor = 50;
-
 State estadoAtual = SISTEMA_NORMAL;
 
 /*
 LE A POTENCIA O TX1 E O LIMITE. SE A POTENCIA ESTIVER OK DEVOLVE 1 SENAO DEVOLVE 0
+LE O ESTADO DO EMISSOR. SE ESTIVER A 0 DEVOLVE 0
 */
 int tx1_check_fwd(){
   float tx1_fwd = analogRead(TX1_FWD) * (5.0 / 1023.0);
   float tx1_limite_fwd = analogRead(TX1_LIMITE_FWD) * (5.0 / 1023.0);
-  Serial.print("1. FWD: ");
+  int tx1_on_off = digitalRead(TX1_LIGADO);
+  Serial.print("1. TX1 FWD: ");
   Serial.print(tx1_fwd);
-  Serial.print("V - LIMITE: ");
-  Serial.println(tx1_limite_fwd);
-delay(2000);
-  if(tx1_fwd > tx1_limite_fwd) {
-    return 1;
+  Serial.print("V - TX1 LIMITE: ");
+  Serial.print(tx1_limite_fwd);
+  Serial.print("V - TX1 ON/OFF: ");
+  Serial.println(tx1_on_off);
+delay(1000); //DEBUG
+  if(tx1_fwd < tx1_limite_fwd || tx1_on_off == 0) {
+    return 0;
   }
   else{
-    return 0;
+    return 1;
   }
 }
 
 void tx2_check_fwd(){
   float tx2_fwd = analogRead(TX2_FWD) * (5.0 / 1023.0);
   float tx2_limite_fwd = analogRead(TX2_LIMITE_FWD) * (5.0 / 1023.0);
+  int tx2_on_off = digitalRead(TX2_LIGADO);
+  Serial.print("2. TX2 FWD: ");
+  Serial.print(tx2_fwd);
+  Serial.print("V - TX2 LIMITE: ");
+  Serial.print(tx2_limite_fwd);
+  Serial.print("V - TX2 ON/OFF: ");
+  Serial.println(tx2_on_off);
+delay(1000); //DEBUG
 }
 
 void setup() {
   pinMode(TX1_LIGADO, INPUT);
+//  digitalWrite(TX1_LIGADO,LOW);
   pinMode(TX2_LIGADO, INPUT);
+//  digitalWrite(TX2_LIGADO,LOW);
   pinMode(LIGA_TX1, OUTPUT);
+  digitalWrite(LIGA_TX1,LOW);
   pinMode(LIGA_TX2, OUTPUT);
+  digitalWrite(LIGA_TX2,LOW);
   pinMode(DESLIGA_TX1, OUTPUT);
+  digitalWrite(DESLIGA_TX1,LOW);
   pinMode(DESLIGA_TX2, OUTPUT);
+  digitalWrite(DESLIGA_TX2,LOW);
   pinMode(COMUTA_RELE_PARA_ORIGEM, OUTPUT);
+  digitalWrite(COMUTA_RELE_PARA_ORIGEM,LOW);
   pinMode(COMUTA_RELE_PARA_RESERVA, OUTPUT);
+  digitalWrite(COMUTA_RELE_PARA_RESERVA,LOW);
   pinMode(RELE_NA_ORIGEM, INPUT);
   pinMode(RELE_NA_RESERVA, INPUT);
 
@@ -75,22 +95,44 @@ void setup() {
 
 }
 
+int tempo_up_para_desligar_emissor = 1000;
+int tempo_up_para_ligar_emissor = 1000;
+int tempo_de_espera_para_arranque = 10000;
+int tempo_rotacao_rele = 10000;
+
 int rearma_tx = 0;
 int falha = 0;
 unsigned long inicio_do_rearme = 0;
 int em_pausa_para_verificar_potencia = 0;
-int tempo_de_espera = 1000;
 int checa_potencia_emissor = 0;
 int desliga_emissores = 0;
 int roda_o_rele = 0;
 int aguarda_rele_posicao_reserva = 0;
 unsigned long inicio_movimento_rele = 0;
-int tempo_rotacao_rele = 10000;
 int liga_tx_reserva = 0;
 
 void loop() {
-
+  //Serial.println(".");
   //verifica_se_carregaram_no_reset();
+  if(digitalRead(BOTAO_RESET) == 1){
+    Serial.println("R .Desliga os emissores");
+    digitalWrite(DESLIGA_TX1, HIGH);
+    digitalWrite(DESLIGA_TX2, HIGH);
+
+    Serial.println("R . Comuta o rele");
+    digitalWrite(COMUTA_RELE_PARA_RESERVA, LOW);
+    digitalWrite(COMUTA_RELE_PARA_ORIGEM, HIGH);
+
+    Serial.println("R . Aguarda o tempo de comutação");
+
+
+    Serial.println("R . Verifica de está na posição");
+
+    Serial.println("R . Liga os emissores");
+
+    Serial.println("Volta ao estado normal");
+    estadoAtual = SISTEMA_NORMAL;
+  }
 
   //verifica_se_recebeu_comando_externo();
 
@@ -109,11 +151,13 @@ void loop() {
         /* desliga tx1*/
         Serial.println("2 . DESLIGA EMISSOR");
         digitalWrite(DESLIGA_TX1, HIGH);
+delay(2000);
         delay(tempo_up_para_desligar_emissor);
         digitalWrite(DESLIGA_TX1, LOW);
 
         /* liga tx1*/
         Serial.println("2 . LIGA EMISSOR");
+delay(2000);
         digitalWrite(LIGA_TX1, HIGH);
         delay(tempo_up_para_ligar_emissor);
         digitalWrite(LIGA_TX1, LOW);
@@ -122,18 +166,17 @@ void loop() {
         inicio_do_rearme = millis();
         rearma_tx = 0;
         em_pausa_para_verificar_potencia = 1;
+        Serial.print("2 . AGURDA ARRANQUE EMISSOR : 10s");
       }
 
       /* espera um pouco apos tentar ligar o emissor */
       if(em_pausa_para_verificar_potencia == 1) {
-        Serial.print("2 . AGURDA ARRANQUE EMISSOR : ");
-        Serial.println(millis() - inicio_do_rearme);
-        delay(2000);
-        if(millis() - inicio_do_rearme >= tempo_de_espera){
+        if(millis() - inicio_do_rearme >= tempo_de_espera_para_arranque){
             em_pausa_para_verificar_potencia = 0;
             checa_potencia_emissor = 1;
         }
       }
+
       /* ve se o tx esta com potencia ok*/
       if(checa_potencia_emissor == 1) {
         Serial.println("2 . CHECA POTENCIA EMISSOR ");
@@ -144,13 +187,12 @@ void loop() {
         }
         else {
           estadoAtual = SISTEMA_NORMAL;
-          Serial.println("2 . SISTEMA VOLTOU AO NORMAL");
+          Serial.println("2 . SISTEMA REGRESSA AO ESTADO NORMAL");
         }
       }
       /* se tentou ligar o equipamento 3x e nao consegui, comuta para reserva */
       if(falha >= 3){
-        Serial.print("2 . SISTEMA EM FALHA : ");
-        Serial.println(falha);
+        Serial.println("2 . SISTEMA EM FALHA : PREPARA COMUTACAO");
         estadoAtual = SISTEMA_EM_COMUTACAO;
         desliga_emissores = 1;
       }
@@ -163,10 +205,10 @@ void loop() {
         digitalWrite(DESLIGA_TX1, HIGH);
         digitalWrite(DESLIGA_TX2, HIGH);
         delay(tempo_up_para_desligar_emissor);
-        digitalWrite(DESLIGA_TX1, LOW);
-        digitalWrite(DESLIGA_TX2, LOW);
-
-        desliga_emissores == 0;
+delay(2000);
+        //digitalWrite(DESLIGA_TX1, LOW);
+        //digitalWrite(DESLIGA_TX2, LOW);
+        desliga_emissores = 0;
         roda_o_rele = 1;
       }
 
@@ -178,12 +220,12 @@ void loop() {
         roda_o_rele = 0;
         aguarda_rele_posicao_reserva = 1;
         inicio_movimento_rele = millis();
+        Serial.print("3 . AGUARDA MOVIMENTO DO RELE ATE A POSICAO RESERVA: 10s");
       }
       /* aguarda que o tempo de rotacao do rele ou que chegue ao final de curso */
       /* passa para o estado seguinte */
       if (aguarda_rele_posicao_reserva == 1) {
-        Serial.print("3 . AGUARDA MOVIMENTO DO RELE");
-        Serial.println(millis() - inicio_movimento_rele);
+        
         if(millis() - inicio_movimento_rele >= tempo_rotacao_rele){
           /* desliga o rele. sistema encravado */
           digitalWrite(COMUTA_RELE_PARA_RESERVA, LOW);
