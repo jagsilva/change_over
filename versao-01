@@ -1,0 +1,218 @@
+// ENTRADAS ANALOGICAS EMISSORES
+#define TX1_FWD A0
+#define TX2_FWD A1
+#define TX1_LIMITE_FWD A2
+#define TX2_LIMITE_FWD A3
+
+// ENTRADAS DIGITAIS EMISSORES
+#define TX1_LIGADO 2
+#define TX2_LIGADO 3
+
+// SAIDAS DIGITAIS EMISSORES
+#define LIGA_TX1 4
+#define LIGA_TX2 5
+#define DESLIGA_TX1 6
+#define DESLIGA_TX2 7
+
+// SAIDAS DIGITAIS RELE
+#define COMUTA_RELE_PARA_ORIGEM 8
+#define COMUTA_RELE_PARA_RESERVA 9
+
+// ENTRADAS DIGITAIS RELE
+#define RELE_NA_ORIGEM 10
+#define RELE_NA_RESERVA 11
+
+enum State {
+  SISTEMA_NORMAL,
+  SISTEMA_EM_FALHA,
+  SISTEMA_EM_COMUTACAO,
+  SISTEMA_EM_RESERVA
+};
+
+int tempo_up_para_desligar_emissor = 50;
+int tempo_up_para_ligar_emissor = 50;
+
+State estadoAtual = SISTEMA_NORMAL;
+
+/*
+LE A POTENCIA O TX1 E O LIMITE. SE A POTENCIA ESTIVER OK DEVOLVE 1 SENAO DEVOLVE 0
+*/
+int tx1_check_fwd(){
+  float tx1_fwd = analogRead(TX1_FWD) * (5.0 / 1023.0);
+  float tx1_limite_fwd = analogRead(TX1_LIMITE_FWD) * (5.0 / 1023.0);
+  Serial.print("1. FWD: ");
+  Serial.print(tx1_fwd);
+  Serial.print("V - LIMITE: ");
+  Serial.println(tx1_limite_fwd);
+delay(2000);
+  if(tx1_fwd > tx1_limite_fwd) {
+    return 1;
+  }
+  else{
+    return 0;
+  }
+}
+
+void tx2_check_fwd(){
+  float tx2_fwd = analogRead(TX2_FWD) * (5.0 / 1023.0);
+  float tx2_limite_fwd = analogRead(TX2_LIMITE_FWD) * (5.0 / 1023.0);
+}
+
+void setup() {
+  pinMode(TX1_LIGADO, INPUT);
+  pinMode(TX2_LIGADO, INPUT);
+  pinMode(LIGA_TX1, OUTPUT);
+  pinMode(LIGA_TX2, OUTPUT);
+  pinMode(DESLIGA_TX1, OUTPUT);
+  pinMode(DESLIGA_TX2, OUTPUT);
+  pinMode(COMUTA_RELE_PARA_ORIGEM, OUTPUT);
+  pinMode(COMUTA_RELE_PARA_RESERVA, OUTPUT);
+  pinMode(RELE_NA_ORIGEM, INPUT);
+  pinMode(RELE_NA_RESERVA, INPUT);
+
+  Serial.begin(115200);
+  Serial.println("SISTEMA INICIALIZADO");
+
+}
+
+int rearma_tx = 0;
+int falha = 0;
+unsigned long inicio_do_rearme = 0;
+int em_pausa_para_verificar_potencia = 0;
+int tempo_de_espera = 1000;
+int checa_potencia_emissor = 0;
+int desliga_emissores = 0;
+int roda_o_rele = 0;
+int aguarda_rele_posicao_reserva = 0;
+unsigned long inicio_movimento_rele = 0;
+int tempo_rotacao_rele = 10000;
+int liga_tx_reserva = 0;
+
+void loop() {
+
+  //verifica_se_carregaram_no_reset();
+
+  //verifica_se_recebeu_comando_externo();
+
+  switch (estadoAtual) {
+    case SISTEMA_NORMAL:
+      if(tx1_check_fwd() == 0){
+        estadoAtual = SISTEMA_EM_FALHA;
+        rearma_tx = 1;
+        falha = 0;
+      }
+      break;
+
+    case SISTEMA_EM_FALHA:
+      /* desliga o tx1 e volta a ligar*/
+      if(rearma_tx == 1){
+        /* desliga tx1*/
+        Serial.println("2 . DESLIGA EMISSOR");
+        digitalWrite(DESLIGA_TX1, HIGH);
+        delay(tempo_up_para_desligar_emissor);
+        digitalWrite(DESLIGA_TX1, LOW);
+
+        /* liga tx1*/
+        Serial.println("2 . LIGA EMISSOR");
+        digitalWrite(LIGA_TX1, HIGH);
+        delay(tempo_up_para_ligar_emissor);
+        digitalWrite(LIGA_TX1, LOW);
+
+        /* comeca a contar tempo */
+        inicio_do_rearme = millis();
+        rearma_tx = 0;
+        em_pausa_para_verificar_potencia = 1;
+      }
+
+      /* espera um pouco apos tentar ligar o emissor */
+      if(em_pausa_para_verificar_potencia == 1) {
+        Serial.print("2 . AGURDA ARRANQUE EMISSOR : ");
+        Serial.println(millis() - inicio_do_rearme);
+        delay(2000);
+        if(millis() - inicio_do_rearme >= tempo_de_espera){
+            em_pausa_para_verificar_potencia = 0;
+            checa_potencia_emissor = 1;
+        }
+      }
+      /* ve se o tx esta com potencia ok*/
+      if(checa_potencia_emissor == 1) {
+        Serial.println("2 . CHECA POTENCIA EMISSOR ");
+        if(tx1_check_fwd() == 0) {
+          falha = falha + 1;
+          checa_potencia_emissor = 0;
+          rearma_tx = 1;
+        }
+        else {
+          estadoAtual = SISTEMA_NORMAL;
+          Serial.println("2 . SISTEMA VOLTOU AO NORMAL");
+        }
+      }
+      /* se tentou ligar o equipamento 3x e nao consegui, comuta para reserva */
+      if(falha >= 3){
+        Serial.print("2 . SISTEMA EM FALHA : ");
+        Serial.println(falha);
+        estadoAtual = SISTEMA_EM_COMUTACAO;
+        desliga_emissores = 1;
+      }
+      break;
+
+    case SISTEMA_EM_COMUTACAO:
+      /* desliga emissores */
+      if(desliga_emissores == 1){
+        Serial.println("3 . DESLIGA EMISSORES");
+        digitalWrite(DESLIGA_TX1, HIGH);
+        digitalWrite(DESLIGA_TX2, HIGH);
+        delay(tempo_up_para_desligar_emissor);
+        digitalWrite(DESLIGA_TX1, LOW);
+        digitalWrite(DESLIGA_TX2, LOW);
+
+        desliga_emissores == 0;
+        roda_o_rele = 1;
+      }
+
+      /* roda o rele */
+      if(roda_o_rele == 1){
+        Serial.println("3 . RODA O RELE");
+        digitalWrite(COMUTA_RELE_PARA_ORIGEM, LOW);
+        digitalWrite(COMUTA_RELE_PARA_RESERVA, HIGH);
+        roda_o_rele = 0;
+        aguarda_rele_posicao_reserva = 1;
+        inicio_movimento_rele = millis();
+      }
+      /* aguarda que o tempo de rotacao do rele ou que chegue ao final de curso */
+      /* passa para o estado seguinte */
+      if (aguarda_rele_posicao_reserva == 1) {
+        Serial.print("3 . AGUARDA MOVIMENTO DO RELE");
+        Serial.println(millis() - inicio_movimento_rele);
+        if(millis() - inicio_movimento_rele >= tempo_rotacao_rele){
+          /* desliga o rele. sistema encravado */
+          digitalWrite(COMUTA_RELE_PARA_RESERVA, LOW);
+          aguarda_rele_posicao_reserva = 0;
+          Serial.println("3 . SISTEMA ENCRAVADO");
+        }
+        /* Se ja esta na posicao desejada liga a reserva*/
+        if(digitalRead(RELE_NA_RESERVA) == HIGH){
+          estadoAtual = SISTEMA_EM_RESERVA;
+          liga_tx_reserva = 1;
+          Serial.println("3 . SISTEMA CHEGOU AO FIM DO MOVIMENTO");
+        }
+      }
+      break;
+
+    case SISTEMA_EM_RESERVA:
+      /* liga o emissor de reserva */
+      if(liga_tx_reserva == 1) {
+        Serial.println("4 . LIGA EMISSOR DE RESERVA");
+        digitalWrite(LIGA_TX2, HIGH);
+        delay(tempo_up_para_ligar_emissor);
+        digitalWrite(LIGA_TX2, LOW);        
+        liga_tx_reserva == 0;
+      }
+      /* verifica se o emissor tem potencia */
+      tx2_check_fwd();
+      break;
+
+
+  }
+
+}
